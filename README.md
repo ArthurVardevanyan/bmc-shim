@@ -1,2 +1,141 @@
-# bmc-sim
-bmc shim
+# bmc-shim
+
+A tiny Go Redfish-compatible shim to control power on/off using pluggable backends. Useful for pointing Metal3/Ironic BMC addresses at a custom controller.
+
+- Provides minimal Redfish endpoints:
+  - `GET /redfish/v1/`
+  - `GET /redfish/v1/Systems`
+  - `GET /redfish/v1/Systems/{id}`
+  - `POST /redfish/v1/Systems/{id}/Actions/ComputerSystem.Reset` with `{ "ResetType": "On" | "ForceOff" | "GracefulShutdown" | "ForceRestart" }`
+- Basic auth (username/password) supported.
+- Backends: `noop` (logs only), `command` (runs shell commands for on/off).
+- Backends: `noop` (logs only), `command` (runs shell commands for on/off), `homeassistant` (controls an HA `switch` entity).
+
+## Build
+
+```sh
+cd tools/bmc-shim
+GO111MODULE=on go build ./cmd/bmc-shim
+```
+
+## Run
+
+### Quick Start (using go run)
+
+First, copy your credentials to `creds.env` (see below for required variables).
+
+Run the shim with Home Assistant backend and multi-system mapping:
+
+```sh
+set -a && source ./creds.env && set +a && \
+go run ./cmd/bmc-shim/main.go \
+  --listen :8000 \
+  --user admin \
+  --pass secret \
+  --backend homeassistant \
+  --ha-url "$BMC_SHIM_HA_URL" \
+  --ha-token "$BMC_SHIM_HA_TOKEN" \
+  --systems "1=switch.power_strip_zone_1_kvm_1,2=switch.power_strip_zone_2_kvm_2,3=switch.power_strip_zone_3_kvm_3,4=switch.power_strip_zone_1_kvm_4,5=switch.power_strip_zone_2_kvm_5,6=switch.power_strip_zone_3_kvm_6"
+```
+
+Or, for a single system with the command backend:
+
+```sh
+go run ./cmd/bmc-shim/main.go \
+  --listen :8000 \
+  --user admin \
+  --pass secret \
+  --system-id 1 \
+  --backend command \
+  --on-cmd 'echo powering on; # add real action' \
+  --off-cmd 'echo powering off; # add real action'
+```
+
+### Home Assistant backend (single system)
+
+```sh
+export BMC_SHIM_HA_URL="https://home.example.com"
+export BMC_SHIM_HA_TOKEN="<your_long_lived_token>"
+export BMC_SHIM_HA_ENTITY="switch.your_entity"
+
+go run ./cmd/bmc-shim/main.go \
+  --listen :8000 \
+  --user admin \
+  --pass secret \
+  --system-id 1 \
+  --backend homeassistant \
+  --ha-url "$BMC_SHIM_HA_URL" \
+  --ha-entity "$BMC_SHIM_HA_ENTITY" \
+  --ha-token "$BMC_SHIM_HA_TOKEN"
+```
+
+### Multi-system Home Assistant example
+
+```sh
+export BMC_SHIM_HA_URL="https://home.arthurvardevanyan.com"
+export BMC_SHIM_HA_TOKEN="<token>"
+
+go run ./cmd/bmc-shim/main.go \
+  --listen :8000 \
+  --user admin \
+  --pass secret \
+  --backend homeassistant \
+  --ha-url "$BMC_SHIM_HA_URL" \
+  --ha-token "$BMC_SHIM_HA_TOKEN" \
+  --systems "1=switch.power_strip_zone_1_kvm_1,2=switch.power_strip_zone_2_kvm_2,3=switch.power_strip_zone_3_kvm_3,4=switch.power_strip_zone_1_kvm_4,5=switch.power_strip_zone_2_kvm_5,6=switch.power_strip_zone_3_kvm_6"
+```
+
+### Environment file example (creds.env)
+
+```
+export BMC_SHIM_HA_URL="https://home.arthurvardevanyan.com"
+export BMC_SHIM_HA_TOKEN="<token>"
+```
+
+Query states via Redfish for a couple of systems:
+
+```sh
+curl -u admin:secret http://127.0.0.1:8000/redfish/v1/Systems
+curl -u admin:secret http://127.0.0.1:8000/redfish/v1/Systems/1
+curl -u admin:secret http://127.0.0.1:8000/redfish/v1/Systems/6
+```
+
+Query current state directly from Home Assistant:
+
+```sh
+curl -H "Authorization: Bearer $BMC_SHIM_HA_TOKEN" \
+     -H 'Accept: application/json' \
+     "$BMC_SHIM_HA_URL/api/states/$BMC_SHIM_HA_ENTITY"
+```
+
+Query state via the shim (reports `PowerState`):
+
+```sh
+curl -u admin:secret http://127.0.0.1:8000/redfish/v1/Systems/1
+```
+
+Environment variables `BMC_SHIM_USER` and `BMC_SHIM_PASS` can substitute `--user/--pass`.
+
+## Test with curl
+
+```sh
+curl -u admin:secret http://127.0.0.1:8000/redfish/v1/
+curl -u admin:secret http://127.0.0.1:8000/redfish/v1/Systems
+curl -u admin:secret http://127.0.0.1:8000/redfish/v1/Systems/1
+curl -u admin:secret -X POST \
+  -H 'Content-Type: application/json' \
+  -d '{"ResetType":"On"}' \
+  http://127.0.0.1:8000/redfish/v1/Systems/1/Actions/ComputerSystem.Reset
+```
+
+## Using with BareMetalHost (Metal3)
+
+Point your `BareMetalHost.spec.bmc.address` at the shim, using a Redfish URL, for example:
+
+```
+redfish+http://<shim-host>:8000/redfish/v1/Systems/1
+```
+
+Set `credentialsName` to a Secret containing `username` and `password` that match the shim's `--user/--pass`.
+
+Note: This shim only implements power control. Inventory, boot device control, and virtual media are not implemented.
