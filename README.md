@@ -7,27 +7,53 @@ A tiny Go Redfish-compatible shim to control power on/off using pluggable backen
   - `GET /redfish/v1/Systems`
   - `GET /redfish/v1/Systems/{id}`
   - `POST /redfish/v1/Systems/{id}/Actions/ComputerSystem.Reset` with `{ "ResetType": "On" | "ForceOff" | "GracefulShutdown" | "ForceRestart" }`
+- Health checks:
+  - `GET /livez` (liveness)
+  - `GET /readyz` (readiness - checks backend connectivity)
 - Basic auth (username/password) supported.
-- Backends: `noop` (logs only), `command` (runs shell commands for on/off).
-- Backends: `noop` (logs only), `command` (runs shell commands for on/off), `homeassistant` (controls an HA `switch` entity).
+- Backends:
+  - `noop`: Logs operations only.
+  - `command`: Runs shell commands for on/off.
+  - `homeassistant`: Controls an HA `switch` entity. Syncs power state and name from HA.
 
 ## Build
 
+Using Make:
+
+```sh
+make build
+# Output binary at /tmp/bmc-shim
+```
+
+Using Go directly:
+
 ```sh
 cd tools/bmc-shim
-GO111MODULE=on go build ./cmd/bmc-shim
+GO111MODULE=on go build -o bmc-shim ./cmd/bmc-shim
+```
+
+Building container image with [ko](https://github.com/ko-build/ko):
+
+```sh
+make ko-build
 ```
 
 ## Run
 
+### Quick Start (using make)
+
+```sh
+make run
+```
+
 ### Quick Start (using go run)
 
-First, copy your credentials to `creds.env` (see below for required variables).
+First, copy your credentials to `credentials.env` (see below for required variables).
 
 Run the shim with Home Assistant backend and multi-system mapping:
 
 ```sh
-set -a && source ./creds.env && set +a && \
+set -a && source ./credentials.env && set +a && \
 go run ./cmd/bmc-shim/main.go \
   --listen :8000 \
   --user admin \
@@ -85,9 +111,9 @@ go run ./cmd/bmc-shim/main.go \
   --systems "1=switch.power_strip_zone_1_kvm_1,2=switch.power_strip_zone_2_kvm_2,3=switch.power_strip_zone_3_kvm_3,4=switch.power_strip_zone_1_kvm_4,5=switch.power_strip_zone_2_kvm_5,6=switch.power_strip_zone_3_kvm_6"
 ```
 
-### Environment file example (creds.env)
+### Environment file example (credentials.env)
 
-```
+```sh
 export BMC_SHIM_HA_URL="https://home.arthurvardevanyan.com"
 export BMC_SHIM_HA_TOKEN="<token>"
 ```
@@ -125,7 +151,7 @@ curl -u admin:secret http://127.0.0.1:8000/redfish/v1/Systems/1
 curl -u admin:secret -X POST \
   -H 'Content-Type: application/json' \
   -d '{"ResetType":"On"}' \
-  http://127.0.0.1:8000/redfish/v1/Systems/1/Actions/ComputerSystem.Reset
+  http://127.0.0.1:8080/redfish/v1/Systems/6/Actions/ComputerSystem.Reset
 ```
 
 ## Using with BareMetalHost (Metal3)
@@ -139,3 +165,7 @@ redfish+http://<shim-host>:8000/redfish/v1/Systems/1
 Set `credentialsName` to a Secret containing `username` and `password` that match the shim's `--user/--pass`.
 
 Note: This shim only implements power control. Inventory, boot device control, and virtual media are not implemented.
+
+## Deployment
+
+See [deploy/Readme.md](deploy/Readme.md) for Kubernetes deployment examples.

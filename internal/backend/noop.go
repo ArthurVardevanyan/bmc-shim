@@ -18,3 +18,7 @@ func (n *noop) PowerOff(ctx context.Context) error {
 	log.Println("noop backend: PowerOff")
 	return nil
 }
+
+func (n *noop) Ping(ctx context.Context) error {
+	return nil
+}

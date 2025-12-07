@@ -26,5 +26,8 @@
   "[yaml]": {
     "editor.defaultFormatter": "redhat.vscode-yaml"
   },
-  "cSpell.words": []
+  "cSpell.words": [
+    "arthurvardevanyan",
+    "homeassistant"
+  ]
 }

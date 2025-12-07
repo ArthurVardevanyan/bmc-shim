@@ -1,9 +1,11 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log"
 	"net/http"
 	"strings"
@@ -20,11 +22,18 @@ type Config struct {
 	Systems  map[string]backend.Backend
 }
 
+type Boot struct {
+	BootSourceOverrideTarget  string `json:"BootSourceOverrideTarget"`
+	BootSourceOverrideEnabled string `json:"BootSourceOverrideEnabled"`
+	BootSourceOverrideMode    string `json:"BootSourceOverrideMode,omitempty"`
+}
+
 type Server struct {
 	cfg  Config
 	http *http.Server
 	mu   sync.RWMutex
 	last map[string]bool
+	boot map[string]Boot
 }
 
 func New(cfg Config) *Server {
@@ -32,10 +41,14 @@ func New(cfg Config) *Server {
 	if cfg.Systems == nil {
 		cfg.Systems = map[string]backend.Backend{}
 	}
-	s := &Server{cfg: cfg, last: map[string]bool{}}
+	s := &Server{
+		cfg:  cfg,
+		last: map[string]bool{},
+		boot: map[string]Boot{},
+	}
 	s.http = &http.Server{
 		Addr:         cfg.Listen,
-		Handler:      s.authMiddleware(mux),
+		Handler:      s.loggingMiddleware(s.authMiddleware(mux)),
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 30 * time.Second,
 		IdleTimeout:  60 * time.Second,
@@ -44,6 +57,8 @@ func New(cfg Config) *Server {
 	mux.HandleFunc("/redfish/v1/", s.handleRoot)
 	mux.HandleFunc("/redfish/v1/Systems", s.handleSystems)
 	mux.HandleFunc("/redfish/v1/Systems/", s.handleSystem)
+	mux.HandleFunc("/livez", s.handleLivez)
+	mux.HandleFunc("/readyz", s.handleReadyz)
 
 	return s
 }
@@ -53,7 +68,7 @@ func (s *Server) Start() error {
 	for id := range s.cfg.Systems {
 		ids = append(ids, id)
 	}
-	log.Printf("bmc-shim listening on %s (systems: %v)", s.cfg.Listen, ids)
+	log.Printf("bmc-shim listening on %s (HTTP) (systems: %v)", s.cfg.Listen, ids)
 	return s.http.ListenAndServe()
 }
 
@@ -61,8 +76,30 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	return s.http.Shutdown(ctx)
 }
 
+func (s *Server) loggingMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		bodyBytes, _ := io.ReadAll(r.Body)
+		r.Body.Close()
+		r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+
+		forwarded := r.Header.Get("X-Forwarded-For")
+		log.Printf("REQ: %s %s RemoteAddr: %s X-Forwarded-For: %s Body: %s", r.Method, r.URL.RequestURI(), r.RemoteAddr, forwarded, string(bodyBytes))
+		next.ServeHTTP(w, r)
+		log.Printf("RES: %s %s RemoteAddr: %s X-Forwarded-For: %s (%v)", r.Method, r.URL.RequestURI(), r.RemoteAddr, forwarded, time.Since(start))
+	})
+}
+
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Allow unauthenticated access to the root service to support discovery
+		// Also allow health checks
+		if r.URL.Path == "/redfish/v1/" || r.URL.Path == "/redfish/v1" ||
+			r.URL.Path == "/livez" || r.URL.Path == "/readyz" {
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		if s.cfg.Username == "" && s.cfg.Password == "" {
 			next.ServeHTTP(w, r)
 			return
@@ -91,11 +128,52 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"@odata.type": "#ServiceRoot.v1_0_0.ServiceRoot",
 		"@odata.id":   "/redfish/v1/",
+		"Id":          "RootService",
 		"Name":        "BMC Shim ServiceRoot",
 		"Systems": map[string]string{
 			"@odata.id": "/redfish/v1/Systems",
 		},
 	})
+}
+
+func (s *Server) handleLivez(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("ok"))
+}
+
+func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
+	// Check if we can reach at least one backend
+	if len(s.cfg.Systems) == 0 {
+		// No systems configured, technically ready but useless?
+		// Let's say ok.
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("ok"))
+		return
+	}
+
+	// Try to ping backends. If at least one succeeds, we are ready.
+	// We don't want to fail if one of many is down, as long as the service is functional.
+	// But if ALL are down, we are probably not ready.
+	success := false
+	for _, be := range s.cfg.Systems {
+		if hc, ok := be.(backend.HealthChecker); ok {
+			if err := hc.Ping(r.Context()); err == nil {
+				success = true
+				break
+			}
+		} else {
+			// Backend doesn't support health check, assume it's fine
+			success = true
+			break
+		}
+	}
+
+	if success {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("ok"))
+	} else {
+		http.Error(w, "all backends failed", http.StatusServiceUnavailable)
+	}
 }
 
 func (s *Server) handleSystems(w http.ResponseWriter, r *http.Request) {
@@ -185,11 +263,33 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request) {
 			name = n
 		}
 	}
+
+	// Get or initialize Boot info for this system
+	s.mu.RLock()
+	boot := s.boot[id]
+	s.mu.RUnlock()
+	if boot.BootSourceOverrideTarget == "" {
+		boot = Boot{
+			BootSourceOverrideTarget:  "None",
+			BootSourceOverrideEnabled: "Disabled",
+		}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"@odata.id":  "/redfish/v1/Systems/" + id,
 		"Id":         id,
 		"Name":       name,
 		"PowerState": powerState,
+		"Boot": map[string]any{
+			"BootSourceOverrideTarget":                         boot.BootSourceOverrideTarget,
+			"BootSourceOverrideEnabled":                        boot.BootSourceOverrideEnabled,
+			"BootSourceOverrideTarget@Redfish.AllowableValues": []string{"None", "Pxe", "Hdd"},
+		},
+		"Links": map[string]any{
+			"ManagedBy": []map[string]string{
+				{"@odata.id": "/redfish/v1/Managers/1"},
+			},
+		},
 		"Actions": map[string]any{
 			"#ComputerSystem.Reset": map[string]any{
 				"target":                            "/redfish/v1/Systems/" + id + "/Actions/ComputerSystem.Reset",

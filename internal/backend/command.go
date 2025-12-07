@@ -27,3 +27,7 @@ func (c *command) PowerOff(ctx context.Context) error {
 	cmd := exec.CommandContext(ctx, "sh", "-lc", c.offCmd)
 	return cmd.Run()
 }
+
+func (c *command) Ping(ctx context.Context) error {
+	return nil
+}

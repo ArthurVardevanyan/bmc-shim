@@ -52,6 +52,11 @@ func (h *HomeAssistant) DisplayName(ctx context.Context) (string, error) {
 	return name, err
 }
 
+func (h *HomeAssistant) Ping(ctx context.Context) error {
+	_, _, err := h.fetchState(ctx)
+	return err
+}
+
 func (h *HomeAssistant) callService(ctx context.Context, domain, service string) error {
 	payload := map[string]any{"entity_id": h.entityID}
 	b, _ := json.Marshal(payload)
