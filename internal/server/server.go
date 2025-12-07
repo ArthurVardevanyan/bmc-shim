@@ -59,6 +59,7 @@ func New(cfg Config) *Server {
 	mux.HandleFunc("/redfish/v1/Systems/", s.handleSystem)
 	mux.HandleFunc("/livez", s.handleLivez)
 	mux.HandleFunc("/readyz", s.handleReadyz)
+	mux.HandleFunc("/startupz", s.handleLivez)
 
 	return s
 }
@@ -95,7 +96,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 		// Allow unauthenticated access to the root service to support discovery
 		// Also allow health checks
 		if r.URL.Path == "/redfish/v1/" || r.URL.Path == "/redfish/v1" ||
-			r.URL.Path == "/livez" || r.URL.Path == "/readyz" {
+			r.URL.Path == "/livez" || r.URL.Path == "/readyz" || r.URL.Path == "/startupz" {
 			next.ServeHTTP(w, r)
 			return
 		}

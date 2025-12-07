@@ -29,6 +29,7 @@ For my use case, this is acceptable, as the node automatically rejoins to the cl
 - Health checks:
   - `GET /livez` (liveness)
   - `GET /readyz` (readiness - checks backend connectivity)
+  - `GET /startupz` (startup)
 - Basic auth (username/password) supported.
 - Backends:
   - `noop`: Logs operations only.
@@ -40,7 +41,7 @@ For my use case, this is acceptable, as the node automatically rejoins to the cl
 ```mermaid
 graph TD
     User[User / Metal3 / Ironic] -->|HTTP Basic Auth| Shim[BMC Shim]
-    K8s[Kubernetes Probes] -->|HTTP /livez, /readyz| Shim
+    K8s[Kubernetes Probes] -->|HTTP /livez, /readyz, /startupz| Shim
 
     subgraph "BMC Shim Internals"
         Shim --> Auth{Authenticated?}
