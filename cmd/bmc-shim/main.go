@@ -14,7 +14,7 @@ import (
 )
 
 func main() {
-	listen := flag.String("listen", ":8000", "address to listen on (e.g. :8000)")
+	listen := flag.String("listen", ":8080", "address to listen on (e.g. :8080)")
 	user := flag.String("user", os.Getenv("BMC_SHIM_USER"), "basic auth username (or BMC_SHIM_USER)")
 	pass := flag.String("pass", os.Getenv("BMC_SHIM_PASS"), "basic auth password (or BMC_SHIM_PASS)")
 	systemID := flag.String("system-id", "1", "Redfish system ID path segment (single-system mode)")

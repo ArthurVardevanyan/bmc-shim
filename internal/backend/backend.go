@@ -19,3 +19,9 @@ type PowerStateProvider interface {
 type NameProvider interface {
 	DisplayName(ctx context.Context) (string, error)
 }
+
+// HealthChecker is an optional interface that backends can implement
+// to report their health status.
+type HealthChecker interface {
+	Ping(ctx context.Context) error
+}
