@@ -1,6 +1,25 @@
 # bmc-shim
 
+- [bmc-shim](#bmc-shim)
+  - [Overview](#overview)
+  - [Flow Chart](#flow-chart)
+  - [Build](#build)
+  - [Run](#run)
+    - [Quick Start (using make)](#quick-start-using-make)
+    - [Quick Start (using go run)](#quick-start-using-go-run)
+    - [Home Assistant backend (single system)](#home-assistant-backend-single-system)
+    - [Multi-system Home Assistant example](#multi-system-home-assistant-example)
+    - [Environment file example (credentials.env)](#environment-file-example-credentialsenv)
+  - [Test with curl](#test-with-curl)
+  - [Using with BareMetalHost (Metal3)](#using-with-baremetalhost-metal3)
+  - [Deployment](#deployment)
+
+## Overview
+
 A tiny Go Redfish-compatible shim to control power on/off using pluggable backends. Useful for pointing Metal3/Ironic BMC addresses at a custom controller.
+
+This assumes the Node has an OS provisioned onto it, this currently does not support provisioning and deprovisioning the underlying operating system.
+For my use case, this is acceptable, as the node automatically rejoins to the cluster on boot.
 
 - Provides minimal Redfish endpoints:
   - `GET /redfish/v1/`
@@ -15,6 +34,36 @@ A tiny Go Redfish-compatible shim to control power on/off using pluggable backen
   - `noop`: Logs operations only.
   - `command`: Runs shell commands for on/off.
   - `homeassistant`: Controls an HA `switch` entity. Syncs power state and name from HA.
+
+## Flow Chart
+
+```mermaid
+graph TD
+    User[User / Metal3 / Ironic] -->|HTTP Basic Auth| Shim[BMC Shim]
+    K8s[Kubernetes Probes] -->|HTTP /livez, /readyz| Shim
+
+    subgraph "BMC Shim Internals"
+        Shim --> Auth{Authenticated?}
+        Auth -->|No| 401[401 Unauthorized]
+        Auth -->|Yes| Router[Request Router]
+
+        Router -->|"/redfish/v1/Systems/{id}"| BackendSelect{Select Backend}
+    end
+
+    BackendSelect -->|Type: HomeAssistant| HA_Backend[Home Assistant Backend]
+    BackendSelect -->|Type: Command| Cmd_Backend[Command Backend]
+    BackendSelect -->|Type: Noop| Noop_Backend[Noop Backend]
+
+    HA_Backend -->|"HTTP API (Bearer Token)"| HA[Home Assistant Instance]
+    Cmd_Backend -->|Exec| Shell[Local Shell]
+    Noop_Backend -->|Log| Stdout[Standard Output]
+
+    HA -->|State/Action| HA_Backend
+    Shell -->|Exit Code| Cmd_Backend
+
+    HA -->|Network/WiFi| SmartPlug[TP-Link Smart Plug]
+    SmartPlug -->|Power State| HA
+```
 
 ## Build
 
@@ -158,7 +207,7 @@ curl -u admin:secret -X POST \
 
 Point your `BareMetalHost.spec.bmc.address` at the shim, using a Redfish URL, for example:
 
-```
+```text
 redfish+http://<shim-host>:8000/redfish/v1/Systems/1
 ```
 
