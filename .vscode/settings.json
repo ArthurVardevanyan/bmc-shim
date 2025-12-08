@@ -28,6 +28,12 @@
   },
   "cSpell.words": [
     "arthurvardevanyan",
-    "homeassistant"
+    "errexit",
+    "homeassistant",
+    "homelab",
+    "nounset",
+    "pipefail",
+    "pipelinesascode",
+    "tekton"
   ]
 }
