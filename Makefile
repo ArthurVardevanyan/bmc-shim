@@ -25,11 +25,11 @@ build:
 run: build
 	/tmp/bmc-shim
 
-.PHONY: ko-build
+.PHONY: ko-build # ,linux/arm64
 ko-build:
-	ko build ./cmd/bmc-shim --platform=linux/amd64,linux/arm64 --bare --sbom none --image-label quay.expires-after="${EXPIRE}" --tags "${TAG}"
+	ko build ./cmd/bmc-shim --platform=linux/amd64 --bare --sbom none --image-label quay.expires-after="${EXPIRE}" --tags "${TAG}"
 
-.PHONY: ko-build-pipeline
+.PHONY: ko-build-pipeline # ,linux/arm64
 ko-build-pipeline:
-	ko build ./cmd/bmc-shim --platform=linux/amd64,linux/arm64 --bare --sbom none --image-label quay.expires-after="${EXPIRE}" --tags "${TAG}"
+	ko build ./cmd/bmc-shim --platform=linux/amd64 --bare --sbom none --image-label quay.expires-after="${EXPIRE}" --tags "${TAG}"
 	echo "${KO_DOCKER_REPO}:${TAG}" > "${WORKSPACE_RESULTS_PATH}"
