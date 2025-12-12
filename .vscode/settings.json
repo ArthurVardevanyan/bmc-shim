@@ -34,6 +34,7 @@
     "nounset",
     "pipefail",
     "pipelinesascode",
+    "skopeo",
     "tekton"
   ]
 }

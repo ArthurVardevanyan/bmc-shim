@@ -44,6 +44,10 @@ spec:
 
     tasks:
       - name: git-clone
+        when:
+          - input: "$(params.event)"
+            operator: in
+            values: ["pull_request"]
         taskRef:
           name: git-clone
           kind: Task
@@ -61,6 +65,10 @@ spec:
       - name: test-build
         runAfter:
           - git-clone
+        when:
+          - input: "$(params.event)"
+            operator: in
+            values: ["pull_request"]
         workspaces:
           - name: output
             workspace: data
@@ -71,10 +79,6 @@ spec:
             value: $(params.git-commit)
           - name: pull-request-number
             value: $(params.pull-request-number)
-          - name: git-url
-            value: $(params.git-url)
-          - name: event
-            value: $(params.event)
         taskSpec:
           params:
             - name: revision
@@ -82,10 +86,6 @@ spec:
             - name: pull-request-number
               type: string
               default: ""
-            - name: git-url
-              type: string
-            - name: event
-              type: string
           results:
             - name: IMAGE
           workspaces:
@@ -139,41 +139,115 @@ spec:
                 set -o pipefail
 
                 cd ${WORKSPACE_DATA_PATH}
+
+                GIT_PR=$(params.pull-request-number)
+                GIT_SHA=$(params.revision)
+                export TAG="pr-${GIT_PR}-${GIT_SHA}"
+                make ko-build-pipeline
+
+      - name: promote
+        runAfter:
+          - git-clone
+        when:
+          - input: "$(params.event)"
+            operator: in
+            values: ["push"]
+        workspaces:
+          - name: basic-auth
+            workspace: git_auth_secret
+        params:
+          - name: revision
+            value: $(params.git-commit)
+          - name: git-url
+            value: $(params.git-url)
+        taskSpec:
+          params:
+            - name: revision
+              type: string
+            - name: git-url
+              type: string
+          workspaces:
+            - name: basic-auth
+              optional: false
+          results:
+            - name: IMAGE
+          stepTemplate:
+            name: stepTemplate
+            resources:
+              requests:
+                memory: 64Mi
+                cpu: 50m
+                ephemeral-storage: 100Mi
+              limits:
+                cpu: "100m"
+                memory: 128Mi
+                ephemeral-storage: 100Mi
+            securityContext:
+              privileged: false
+              readOnlyRootFilesystem: true
+              runAsNonRoot: true
+              allowPrivilegeEscalation: false
+              seccompProfile:
+                type: RuntimeDefault
+              capabilities:
+                drop:
+                  - ALL
+          steps:
+            - name: promote
+              image: registry.arthurvardevanyan.com/homelab/toolbox:not_latest
+              env:
+                - name: WORKSPACE_RESULTS_PATH
+                  value: $(results.IMAGE.path)
+              script: |
+                set -o errexit
+                set -o nounset
+                set -o pipefail
+
+                cd ${WORKSPACE_DATA_PATH}
                 git config --global --add safe.directory "${WORKSPACE_DATA_PATH}"
 
                 gh auth login --hostname "github.com" --with-token <"$(workspaces.basic-auth.path)/git-provider-token"
 
-                export GIT_PR
-                export GIT_SHA
-                if [ "$(params.event)" = "push" ]; then
-                  echo "Get PR Number"
-                  GIT_PR=$(gh pr list --repo $(params.git-url) --search "$(params.revision)" --state merged --json url | jq --raw-output '.[] | .url' | rev | cut -d/ -f1 | rev)
-                  echo "Get PR SHA"
-                  GIT_SHA=$(gh pr view $GIT_PR --repo $(params.git-url) --json headRefOid --jq .headRefOid)
+                echo "Get PR Number"
+                GIT_PR=$(gh pr list --repo $(params.git-url) --search "$(params.revision)" --state merged --json url | jq --raw-output '.[] | .url' | rev | cut -d/ -f1 | rev)
+                echo "Get PR SHA"
+                GIT_SHA=$(gh pr view $GIT_PR --repo $(params.git-url) --json headRefOid --jq .headRefOid)
 
-                  export REPO=$(grep "export KO_DOCKER_REPO" Makefile | cut -d= -f2)
-                  export PR_TAG="pr-${GIT_PR}-${GIT_SHA}"
-                  export NEW_TAG=$(date -u +"%Y.%m.%d.%H%M%S")-pr${GIT_PR}
+                export REPO=$(grep "export KO_DOCKER_REPO" Makefile | cut -d= -f2)
+                export PR_TAG="pr-${GIT_PR}-${GIT_SHA}"
+                export NEW_TAG=$(date -u +"%Y.%m.%d.%H%M%S")-pr${GIT_PR}
 
-                  echo "Promoting ${REPO}:${PR_TAG} to ${REPO}:${NEW_TAG}"
-                  skopeo copy docker://${REPO}:${PR_TAG} docker://${REPO}:${NEW_TAG} --multi-arch all --preserve-digests
-                  echo "${REPO}:${NEW_TAG}" > ${WORKSPACE_RESULTS_PATH}
-                else
-                  GIT_PR=$(params.pull-request-number)
-                  GIT_SHA=$(params.revision)
-                  export TAG="pr-${GIT_PR}-${GIT_SHA}"
-                  make ko-build-pipeline
-                fi
+                echo "Promoting ${REPO}:${PR_TAG} to ${REPO}:${NEW_TAG}"
+                skopeo copy --all --preserve-digests docker://${REPO}:${PR_TAG} docker://${REPO}:${NEW_TAG}
+                echo "${REPO}:${NEW_TAG}" > ${WORKSPACE_RESULTS_PATH}
 
-      - name: clair-action
+      - name: clair-action-pr
         runAfter:
           - test-build
+        when:
+          - input: "$(params.event)"
+            operator: in
+            values: ["pull_request"]
         taskRef:
           name: clair-action
           kind: Task
         params:
           - name: IMAGE
             value: $(tasks.test-build.results.IMAGE)
+
+      - name: clair-action-push
+        runAfter:
+          - promote
+        when:
+          - input: "$(params.event)"
+            operator: in
+            values: ["push"]
+        taskRef:
+          name: clair-action
+          kind: Task
+        params:
+          - name: IMAGE
+            value: $(tasks.promote.results.IMAGE)
 
   taskRunTemplate:
     serviceAccountName: pipeline
