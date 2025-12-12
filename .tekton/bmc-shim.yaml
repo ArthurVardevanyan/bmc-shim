@@ -152,8 +152,8 @@ spec:
                   GIT_SHA=$(gh pr view $GIT_PR --repo $(params.git-url) --json headRefOid --jq .headRefOid)
 
                   export REPO=$(grep "export KO_DOCKER_REPO" Makefile | cut -d= -f2)
-                  export PR_TAG="push-${GIT_PR}-${GIT_SHA}"
-                  export NEW_TAG=$(date -u +"%Y.%m.%d.%H%M%S")-push-${GIT_PR}
+                  export PR_TAG="$(date -u +"%Y.%m.%d.%H%M%S")-pr-${GIT_PR}-${GIT_SHA}"
+                  export NEW_TAG=$(date -u +"%Y.%m.%d.%H%M%S")-push-${GIT_PR}-$(params.revision)
 
                   echo "Promoting ${REPO}:${PR_TAG} to ${REPO}:${NEW_TAG}"
                   skopeo copy docker://${REPO}:${PR_TAG} docker://${REPO}:${NEW_TAG} --multi-arch all --preserve-digests
