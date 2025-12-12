@@ -157,7 +157,7 @@ spec:
                     echo "Failed to find PR tag for ${GIT_PR}-${GIT_SHA}"
                     exit 1
                   fi
-                  export NEW_TAG=$(date -u +"%Y.%m.%d.%H%M%S")-push-${GIT_PR}-$(params.revision)
+                  export NEW_TAG=$(date -u +"%Y.%m.%d.%H%M%S")-push-${GIT_PR} #-$(params.revision)
 
                   echo "Promoting ${REPO}:${PR_TAG} to ${REPO}:${NEW_TAG}"
                   skopeo copy docker://${REPO}:${PR_TAG} docker://${REPO}:${NEW_TAG} --multi-arch all --preserve-digests
