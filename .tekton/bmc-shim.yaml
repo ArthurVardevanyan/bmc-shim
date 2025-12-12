@@ -152,7 +152,11 @@ spec:
                   GIT_SHA=$(gh pr view $GIT_PR --repo $(params.git-url) --json headRefOid --jq .headRefOid)
 
                   export REPO=$(grep "export KO_DOCKER_REPO" Makefile | cut -d= -f2)
-                  export PR_TAG="$(date -u +"%Y.%m.%d.%H%M%S")-pr-${GIT_PR}-${GIT_SHA}"
+                  export PR_TAG=$(skopeo list-tags docker://${REPO} | jq -r '.Tags[]' | grep -E ".*-pr-${GIT_PR}-${GIT_SHA}$" | sort -r | head -n 1)
+                  if [ -z "${PR_TAG}" ]; then
+                    echo "Failed to find PR tag for ${GIT_PR}-${GIT_SHA}"
+                    exit 1
+                  fi
                   export NEW_TAG=$(date -u +"%Y.%m.%d.%H%M%S")-push-${GIT_PR}-$(params.revision)
 
                   echo "Promoting ${REPO}:${PR_TAG} to ${REPO}:${NEW_TAG}"
