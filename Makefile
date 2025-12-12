@@ -2,7 +2,7 @@
 WORKSPACE_RESULTS_PATH ?= /tmp/image
 export KO_DOCKER_REPO=registry.arthurvardevanyan.com/homelab/bmc-shim
 export KO_DEFAULTBASEIMAGE=cgr.dev/chainguard/static:latest
-TAG ?= $(shell date --utc '+%Y%m%d-%H%M')
+TAG ?= $(shell date --utc '+"%Y.%m.%d.%H%M%S"'-local)
 EXPIRE ?= 180d
 
 # Get the currently used golang install path (in GOPATH/bin, unless GOBIN is set)
