@@ -70,7 +70,11 @@ func (h *HomeAssistant) callService(ctx context.Context, domain, service string)
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil {
+			fmt.Printf("error closing response body: %v\n", cerr)
+		}
+	}()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("homeassistant service %s.%s: http %d", domain, service, resp.StatusCode)
 	}
@@ -89,7 +93,11 @@ func (h *HomeAssistant) fetchState(ctx context.Context) (string, string, error) 
 	if err != nil {
 		return "", "", err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil {
+			fmt.Printf("error closing response body: %v\n", cerr)
+		}
+	}()
 	if resp.StatusCode != 200 {
 		return "", "", fmt.Errorf("homeassistant state: http %d", resp.StatusCode)
 	}

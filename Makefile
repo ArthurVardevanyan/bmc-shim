@@ -21,6 +21,7 @@ SHELL = /usr/bin/env bash -o pipefail
 
 .PHONY: build
 build:
+	golangci-lint run
 	go build -C cmd/bmc-shim -o /tmp/bmc-shim
 
 .PHONY: run
@@ -28,7 +29,7 @@ run: build
 	/tmp/bmc-shim
 
 .PHONY: ko-build # ,linux/arm64
-ko-build:
+ko-build: build
 	ko build ./cmd/bmc-shim --platform=linux/amd64 --bare --sbom none --image-label quay.expires-after="${EXPIRE}" --tags "${TAG}"
 
 .PHONY: ko-build-pipeline # ,linux/arm64
