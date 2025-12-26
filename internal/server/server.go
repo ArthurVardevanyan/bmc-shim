@@ -81,7 +81,9 @@ func (s *Server) loggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		bodyBytes, _ := io.ReadAll(r.Body)
-		r.Body.Close()
+		if err := r.Body.Close(); err != nil {
+			log.Printf("error closing request body: %v", err)
+		}
 		r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 
 		forwarded := r.Header.Get("X-Forwarded-For")
@@ -139,7 +141,9 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleLivez(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte("ok"))
+	if _, err := w.Write([]byte("ok")); err != nil {
+		log.Printf("error writing response: %v", err)
+	}
 }
 
 func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
@@ -148,7 +152,9 @@ func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 		// No systems configured, technically ready but useless?
 		// Let's say ok.
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("ok"))
+		if _, err := w.Write([]byte("ok")); err != nil {
+			log.Printf("error writing response: %v", err)
+		}
 		return
 	}
 
@@ -171,7 +177,9 @@ func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 
 	if success {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("ok"))
+		if _, err := w.Write([]byte("ok")); err != nil {
+			log.Printf("error writing response: %v", err)
+		}
 	} else {
 		http.Error(w, "all backends failed", http.StatusServiceUnavailable)
 	}

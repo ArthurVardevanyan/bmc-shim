@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 
@@ -13,18 +14,27 @@ import (
 	"github.com/ArthurVardevanyan/bmc-shim/internal/server"
 )
 
+func readConfigValue(name string) string {
+	// Check /etc/bmc-shim/<name> first, then env
+	path := filepath.Join("/etc/bmc-shim", name)
+	if b, err := os.ReadFile(path); err == nil {
+		return strings.TrimSpace(string(b))
+	}
+	return os.Getenv("BMC_SHIM_" + strings.ToUpper(name))
+}
+
 func main() {
 	listen := flag.String("listen", ":8080", "address to listen on (e.g. :8080)")
-	user := flag.String("user", os.Getenv("BMC_SHIM_USER"), "basic auth username (or BMC_SHIM_USER)")
-	pass := flag.String("pass", os.Getenv("BMC_SHIM_PASS"), "basic auth password (or BMC_SHIM_PASS)")
+	user := flag.String("user", readConfigValue("user"), "basic auth username (or /etc/bmc-shim/user or BMC_SHIM_USER)")
+	pass := flag.String("pass", readConfigValue("pass"), "basic auth password (or /etc/bmc-shim/pass or BMC_SHIM_PASS)")
 	systemID := flag.String("system-id", "1", "Redfish system ID path segment (single-system mode)")
 	beKind := flag.String("backend", "noop", "backend kind: noop|command|homeassistant")
 	onCmd := flag.String("on-cmd", "", "command to execute for power ON (backend=command)")
 	offCmd := flag.String("off-cmd", "", "command to execute for power OFF (backend=command)")
-	haURL := flag.String("ha-url", os.Getenv("BMC_SHIM_HA_URL"), "Home Assistant base URL (backend=homeassistant)")
-	haToken := flag.String("ha-token", os.Getenv("BMC_SHIM_HA_TOKEN"), "Home Assistant API token (backend=homeassistant or BMC_SHIM_HA_TOKEN)")
-	haEntity := flag.String("ha-entity", os.Getenv("BMC_SHIM_HA_ENTITY"), "Home Assistant entity_id (backend=homeassistant)")
-	haSystems := flag.String("systems", os.Getenv("BMC_SHIM_HA_SYSTEMS"), "Comma-separated list of id=entity_id for multi-system (backend=homeassistant)")
+	haURL := flag.String("ha-url", readConfigValue("ha_url"), "Home Assistant base URL (backend=homeassistant)")
+	haToken := flag.String("ha-token", readConfigValue("ha_token"), "Home Assistant API token (backend=homeassistant or /etc/bmc-shim/ha_token or BMC_SHIM_HA_TOKEN)")
+	haEntity := flag.String("ha-entity", readConfigValue("ha_entity"), "Home Assistant entity_id (backend=homeassistant)")
+	haSystems := flag.String("systems", readConfigValue("ha_systems"), "Comma-separated list of id=entity_id for multi-system (backend=homeassistant)")
 	flag.Parse()
 
 	if *user == "" || *pass == "" {
