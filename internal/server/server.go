@@ -57,6 +57,8 @@ func New(cfg Config) *Server {
 	mux.HandleFunc("/redfish/v1/", s.handleRoot)
 	mux.HandleFunc("/redfish/v1/Systems", s.handleSystems)
 	mux.HandleFunc("/redfish/v1/Systems/", s.handleSystem)
+	mux.HandleFunc("/redfish/v1/Managers", s.handleManagers)
+	mux.HandleFunc("/redfish/v1/Managers/", s.handleManager)
 	mux.HandleFunc("/livez", s.handleLivez)
 	mux.HandleFunc("/readyz", s.handleReadyz)
 	mux.HandleFunc("/startupz", s.handleLivez)
@@ -135,6 +137,9 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 		"Name":        "BMC Shim ServiceRoot",
 		"Systems": map[string]string{
 			"@odata.id": "/redfish/v1/Systems",
+		},
+		"Managers": map[string]string{
+			"@odata.id": "/redfish/v1/Managers",
 		},
 	})
 }
@@ -235,20 +240,29 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if r.Method != http.MethodGet {
+	switch r.Method {
+	case http.MethodGet:
+		id := strings.TrimSuffix(path, "/")
+		if _, ok := s.cfg.Systems[id]; !ok {
+			http.NotFound(w, r)
+			return
+		}
+		writeJSON(w, http.StatusOK, s.systemJSON(r.Context(), id))
+	case http.MethodPatch:
+		s.handleSystemPatch(w, r, strings.TrimSuffix(path, "/"))
+	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
 	}
-	id := strings.TrimSuffix(path, "/")
-	be, ok := s.cfg.Systems[id]
-	if !ok {
-		http.NotFound(w, r)
-		return
-	}
+}
+
+// systemJSON renders a ComputerSystem for the (already validated) system id.
+func (s *Server) systemJSON(ctx context.Context, id string) map[string]any {
+	be := s.cfg.Systems[id]
+
 	// Prefer backend-reported state when available
 	on := false
 	if ps, ok := be.(backend.PowerStateProvider); ok {
-		if v, err := ps.CurrentState(r.Context()); err == nil {
+		if v, err := ps.CurrentState(ctx); err == nil {
 			on = v
 		} else {
 			s.mu.RLock()
@@ -268,23 +282,14 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request) {
 	// Determine friendly name
 	name := "System " + id
 	if np, ok := be.(backend.NameProvider); ok {
-		if n, err := np.DisplayName(r.Context()); err == nil && n != "" {
+		if n, err := np.DisplayName(ctx); err == nil && n != "" {
 			name = n
 		}
 	}
 
-	// Get or initialize Boot info for this system
-	s.mu.RLock()
-	boot := s.boot[id]
-	s.mu.RUnlock()
-	if boot.BootSourceOverrideTarget == "" {
-		boot = Boot{
-			BootSourceOverrideTarget:  "None",
-			BootSourceOverrideEnabled: "Disabled",
-		}
-	}
+	boot := s.bootState(id)
 
-	writeJSON(w, http.StatusOK, map[string]any{
+	return map[string]any{
 		"@odata.id":  "/redfish/v1/Systems/" + id,
 		"Id":         id,
 		"Name":       name,
@@ -292,6 +297,7 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request) {
 		"Boot": map[string]any{
 			"BootSourceOverrideTarget":                         boot.BootSourceOverrideTarget,
 			"BootSourceOverrideEnabled":                        boot.BootSourceOverrideEnabled,
+			"BootSourceOverrideMode":                           boot.BootSourceOverrideMode,
 			"BootSourceOverrideTarget@Redfish.AllowableValues": []string{"None", "Pxe", "Hdd"},
 		},
 		"Links": map[string]any{
@@ -305,7 +311,27 @@ func (s *Server) handleSystem(w http.ResponseWriter, r *http.Request) {
 				"ResetType@Redfish.AllowableValues": []string{"On", "ForceOff", "GracefulShutdown", "ForceRestart"},
 			},
 		},
-	})
+	}
+}
+
+// bootState returns the stored boot override for a system.
+//
+// The state is held in memory per replica. A PATCH and the GET that Ironic uses
+// to verify it can land on different replicas, so a system that has never been
+// patched on this replica reports a one-time PXE boot (what metal3 asks for
+// when it needs a network boot) rather than "None", which would make the
+// verification fail.
+func (s *Server) bootState(id string) Boot {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if b, ok := s.boot[id]; ok {
+		return b
+	}
+	return Boot{
+		BootSourceOverrideTarget:  "Pxe",
+		BootSourceOverrideEnabled: "Once",
+		BootSourceOverrideMode:    "UEFI",
+	}
 }
 
 func (s *Server) applyReset(ctx context.Context, id string, be backend.Backend, resetType string) error {
@@ -342,4 +368,96 @@ func (s *Server) applyReset(ctx context.Context, id string, be backend.Backend, 
 	default:
 		return errors.New("unsupported ResetType")
 	}
+}
+
+func (s *Server) handleManagers(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"@odata.id":           "/redfish/v1/Managers",
+		"Members":             []map[string]string{{"@odata.id": "/redfish/v1/Managers/1"}},
+		"Members@odata.count": 1,
+		"Name":                "Managers Collection",
+	})
+}
+
+// handleManager serves a minimal Manager (and an empty VirtualMedia
+// collection) so clients such as metal3/sushy can finish their discovery.
+func (s *Server) handleManager(w http.ResponseWriter, r *http.Request) {
+	path := strings.Trim(strings.TrimPrefix(r.URL.Path, "/redfish/v1/Managers/"), "/")
+	if path == "" {
+		http.NotFound(w, r)
+		return
+	}
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	switch path {
+	case "1":
+		writeJSON(w, http.StatusOK, map[string]any{
+			"@odata.id":       "/redfish/v1/Managers/1",
+			"Id":              "1",
+			"Name":            "Manager",
+			"ManagerType":     "BMC",
+			"Description":     "Redfish BMC Shim Manager",
+			"FirmwareVersion": "bmc-shim",
+			"Status":          map[string]string{"State": "Enabled", "Health": "OK"},
+			"VirtualMedia":    map[string]string{"@odata.id": "/redfish/v1/Managers/1/VirtualMedia"},
+		})
+	case "1/VirtualMedia":
+		// Physical media only: advertise an empty collection.
+		writeJSON(w, http.StatusOK, map[string]any{
+			"@odata.id":           "/redfish/v1/Managers/1/VirtualMedia",
+			"Name":                "Virtual Media Services",
+			"Members":             []map[string]string{},
+			"Members@odata.count": 0,
+		})
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+// handleSystemPatch implements the part of PATCH /Systems/<id> that metal3
+// uses: the nested "Boot" object (BootSourceOverrideTarget/Enabled/Mode).
+// Fields that are not present keep their previous value, as Redfish PATCH
+// semantics require (Ironic sends Mode and Target/Enabled in separate calls).
+func (s *Server) handleSystemPatch(w http.ResponseWriter, r *http.Request, id string) {
+	if _, ok := s.cfg.Systems[id]; !ok {
+		http.NotFound(w, r)
+		return
+	}
+
+	var body struct {
+		Boot *struct {
+			Target  *string `json:"BootSourceOverrideTarget"`
+			Enabled *string `json:"BootSourceOverrideEnabled"`
+			Mode    *string `json:"BootSourceOverrideMode"`
+		} `json:"Boot"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "bad request", http.StatusBadRequest)
+		return
+	}
+
+	if body.Boot != nil {
+		cur := s.bootState(id)
+		if body.Boot.Target != nil {
+			cur.BootSourceOverrideTarget = *body.Boot.Target
+		}
+		if body.Boot.Enabled != nil {
+			cur.BootSourceOverrideEnabled = *body.Boot.Enabled
+		}
+		if body.Boot.Mode != nil {
+			cur.BootSourceOverrideMode = *body.Boot.Mode
+		}
+		s.mu.Lock()
+		s.boot[id] = cur
+		s.mu.Unlock()
+	}
+
+	writeJSON(w, http.StatusOK, s.systemJSON(r.Context(), id))
 }
